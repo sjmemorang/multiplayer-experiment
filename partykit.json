@@ -1,0 +1,13 @@
+{
+  "$schema": "https://www.partykit.io/schema.json",
+  "name": "realtime-prosemirror",
+  "main": "src/party/server.ts",
+  "compatibilityDate": "2025-02-25",
+  "parties": {
+    "rooms": "src/party/rooms.ts"
+  },
+  "serve": {
+    "path": "public",
+    "build": "src/client.js"
+  }
+}

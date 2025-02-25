@@ -1,0 +1,27 @@
+{
+  "name": "realtime-prosemirror",
+  "version": "1.0.0",
+  "description": "Realtime ProseMirror with Partykit",
+  "scripts": {
+    "dev": "partykit dev --live",
+    "deploy": "partykit deploy"
+  },
+  "author": "Sid Jain",
+  "license": "UNLICENSE",
+  "dependencies": {
+    "@handlewithcare/react-prosemirror": "^2.2.4",
+    "lit-html": "^3.2.1",
+    "partysocket": "^1.0.3",
+    "prosemirror-example-setup": "^1.2.3",
+    "prosemirror-model": "^1.24.1",
+    "prosemirror-state": "^1.4.3",
+    "prosemirror-view": "^1.37.1",
+    "y-partykit": "^0.0.32",
+    "y-prosemirror": "^1.2.15",
+    "yjs": "^13.6.23"
+  },
+  "devDependencies": {
+    "partykit": "^0.0.111",
+    "typescript": "^5.7.3"
+  }
+}
