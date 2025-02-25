@@ -25,12 +25,14 @@ import * as pair from "lib0/pair.js";
  * @property {number} date
  * @property {Uint8Array} snapshot
  * @property {number} clientID
+ * @property {string} username
  */
 
 /**
  * @param {Y.Doc} doc
+ * @param {string} username
  */
-const addVersion = (doc) => {
+const addVersion = (doc, username) => {
   const versions = doc.getArray("versions");
   const prevVersion =
     versions.length === 0 ? null : versions.get(versions.length - 1);
@@ -54,9 +56,26 @@ const addVersion = (doc) => {
         date: currentTime,
         snapshot: Y.encodeSnapshot(snapshot),
         clientID: doc.clientID,
+        username: username
       },
     ]);
   }
+};
+
+/**
+ * Sets up automatic snapshots at regular intervals
+ * @param {Y.Doc} doc - The Yjs document
+ * @param {string} username - The username
+ * @param {number} intervalSeconds - Interval in seconds between snapshots
+ * @returns {() => void} - Function to stop the automatic snapshots
+ */
+const setupAutoSnapshot = (doc, username, intervalSeconds = 5) => {
+  const intervalId = setInterval(() => {
+    addVersion(doc, username);
+  }, intervalSeconds * 1000);
+  
+  // Return a function to stop the automatic snapshots
+  return () => clearInterval(intervalId);
 };
 
 const liveTracking = /** @type {HTMLInputElement} */ (
@@ -112,9 +131,10 @@ const versionTemplate = (
       ? version.date
       : Date.now();
 
-  // Get username from clientID using permanentUserData
-  const username =
-    permanentUserData.getUserByClientId(version.clientID) || "Unknown user";
+  // Use the stored username if available, otherwise fall back to PermanentUserData
+  const username = version.username || 
+    permanentUserData.getUserByClientId(version.clientID) || 
+    "Unknown user";
 
   return html`<div
     class="version-list"
@@ -140,8 +160,8 @@ const versionList = (editorview, doc, permanentUserData) => {
   </div>`;
 };
 
-const snapshotButton = (doc) => {
-  return html`<button @click=${() => addVersion(doc)}>Snapshot</button>`;
+const snapshotButton = (doc, username) => {
+  return html`<button @click=${() => addVersion(doc, username)}>Snapshot</button>`;
 };
 
 /**
@@ -149,17 +169,22 @@ const snapshotButton = (doc) => {
  * @param {Y.Doc} doc
  * @param {EditorView} editorview
  * @param {Y.PermanentUserData} permanentUserData
+ * @param {string} username
  */
-export const attachVersion = (parent, doc, editorview, permanentUserData) => {
+export const attachVersion = (parent, doc, editorview, permanentUserData, username) => {
   let open = false;
   const rerender = () => {
     render(
       html`<div class="version-modal" ?hidden=${open}>
-        ${snapshotButton(doc)}${versionList(editorview, doc, permanentUserData)}
+        ${snapshotButton(doc, username)}${versionList(editorview, doc, permanentUserData)}
       </div>`,
       vContainer
     );
   };
+  
+  // Start automatic snapshots every 5 seconds
+  setupAutoSnapshot(doc, username, 5);
+  
   updateLiveTrackingState(editorview);
   liveTracking.addEventListener("click", () => {
     if (liveTracking.checked) {
@@ -214,9 +239,23 @@ const colors = [
   { light: "#6eeb8333", dark: "#6eeb83" },
 ];
 
-const user = random.oneOf(testUsers);
-
 window.addEventListener("load", () => {
+  // Prompt the user for their username before initializing
+  const username = prompt("Please enter your username:", "");
+  
+  // If user cancels or enters empty string, use a default name
+  const userDisplayName = username ? username.trim() : "Anonymous";
+  
+  // Select a random color for the user
+  const userColor = random.oneOf(colors);
+  
+  // Create a user object with the provided username and random color
+  const user = {
+    username: userDisplayName,
+    color: userColor.dark,
+    lightColor: userColor.light
+  };
+  
   const ydoc = new Y.Doc();
   const permanentUserData = new Y.PermanentUserData(ydoc);
   permanentUserData.setUserMapping(ydoc, ydoc.clientID, user.username);
@@ -253,7 +292,8 @@ window.addEventListener("load", () => {
     document.getElementById("y-version"),
     ydoc,
     prosemirrorView,
-    permanentUserData
+    permanentUserData,
+    user.username
   );
 
   const connectBtn = document.getElementById("y-connect-btn");
