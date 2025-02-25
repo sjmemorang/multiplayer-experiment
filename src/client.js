@@ -423,18 +423,6 @@ window.addEventListener("load", () => {
   
   const yXmlFragment = ydoc.get("prosemirror", Y.XmlFragment);
 
-  // Add CSS for highlighting user changes
-  const styleElement = document.createElement('style');
-  styleElement.textContent = `
-    .user-change {
-      transition: background-color 0.5s ease;
-    }
-    .user-change-highlight {
-      transition: background-color 0s;
-    }
-  `;
-  document.head.appendChild(styleElement);
-
   const editor = document.createElement("div");
   editor.setAttribute("id", "editor");
   const editorContainer = document.createElement("div");
@@ -445,30 +433,8 @@ window.addEventListener("load", () => {
       plugins: [
         ySyncPlugin(yXmlFragment, { 
           permanentUserData,
-          // Use the same color system for highlighting changes
-          colors: {
-            getColor: getUserColor,
-            getLocalColor: () => user.color,
-            getLightColor: getLightColor
-          }
         }),
-        yCursorPlugin(provider.awareness, {
-          // Configure cursor to show username
-          cursorBuilder: (user) => {
-            const cursor = document.createElement('span');
-            cursor.classList.add('y-cursor');
-            cursor.setAttribute('style', `border-color: ${user.color}`);
-            
-            // Create tooltip with username
-            const tooltip = document.createElement('div');
-            tooltip.textContent = user.name || 'Anonymous';
-            tooltip.style.backgroundColor = user.color;
-            tooltip.style.color = '#fff';
-            
-            cursor.appendChild(tooltip);
-            return cursor;
-          }
-        }),
+        yCursorPlugin(provider.awareness),
         yUndoPlugin(),
         keymap({
           "Mod-z": undo,
