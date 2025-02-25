@@ -15,7 +15,6 @@ import { EditorView } from "prosemirror-view";
 import { schema } from "./schema.js";
 import { exampleSetup } from "prosemirror-example-setup";
 import { keymap } from "prosemirror-keymap";
-import * as random from "lib0/random.js";
 import { html, render } from "lit-html";
 import * as dom from "lib0/dom.js";
 import * as pair from "lib0/pair.js";
@@ -31,6 +30,7 @@ import * as pair from "lib0/pair.js";
 /**
  * @param {Y.Doc} doc
  * @param {string} username
+ * @returns {boolean} Whether a new version was added
  */
 const addVersion = (doc, username) => {
   const versions = doc.getArray("versions");
@@ -48,18 +48,37 @@ const addVersion = (doc, username) => {
       /** @type {number} */ (prevSnapshot.sv.get(prevVersion.clientID)) + 1
     );
   }
+  
+  // Check if there are local changes by comparing the local state vector
+  let hasLocalChanges = false;
   if (!Y.equalSnapshots(prevSnapshot, snapshot)) {
-    // Ensure we're storing a valid timestamp
-    const currentTime = new Date().getTime();
-    versions.push([
-      {
-        date: currentTime,
-        snapshot: Y.encodeSnapshot(snapshot),
-        clientID: doc.clientID,
-        username: username
-      },
-    ]);
+    // Check if the current client has made changes
+    const localClientID = doc.clientID;
+    const prevSV = prevSnapshot.sv;
+    const currentSV = snapshot.sv;
+    
+    // If this client's state vector has increased, they've made changes
+    const prevClientValue = prevSV.get(localClientID) || 0;
+    const currentClientValue = currentSV.get(localClientID) || 0;
+    
+    hasLocalChanges = currentClientValue > prevClientValue;
+    
+    // Only add a version if the local user has made changes
+    if (hasLocalChanges) {
+      // Ensure we're storing a valid timestamp
+      const currentTime = new Date().getTime();
+      versions.push([
+        {
+          date: currentTime,
+          snapshot: Y.encodeSnapshot(snapshot),
+          clientID: doc.clientID,
+          username: username
+        },
+      ]);
+      return true;
+    }
   }
+  return false;
 };
 
 /**
@@ -70,8 +89,18 @@ const addVersion = (doc, username) => {
  * @returns {() => void} - Function to stop the automatic snapshots
  */
 const setupAutoSnapshot = (doc, username, intervalSeconds = 5) => {
+  // Track the last time we successfully added a version
+  let lastVersionTime = Date.now();
+  
   const intervalId = setInterval(() => {
-    addVersion(doc, username);
+    // Only try to add a version if enough time has passed since the last successful version
+    const currentTime = Date.now();
+    if (currentTime - lastVersionTime >= intervalSeconds * 1000) {
+      const added = addVersion(doc, username);
+      if (added) {
+        lastVersionTime = currentTime;
+      }
+    }
   }, intervalSeconds * 1000);
   
   // Return a function to stop the automatic snapshots
@@ -135,13 +164,65 @@ const versionTemplate = (
   const username = version.username || 
     permanentUserData.getUserByClientId(version.clientID) || 
     "Unknown user";
+    
+  // Get user color based on clientID for consistent coloring
+  const userColor = getUserColor(version.clientID);
 
   return html`<div
     class="version-list"
     @click=${() => renderVersion(editorview, version, prevSnapshot)}
+    style="border-left: 3px solid ${userColor}; padding-left: 5px;"
   >
-    ${new Date(timestamp).toLocaleString()} by ${username}
+    ${new Date(timestamp).toLocaleString()} by <span style="color: ${userColor}; font-weight: bold;">${username}</span>
   </div>`;
+};
+
+/**
+ * Generates a consistent color for a user based on their clientID
+ * @param {number} clientID - The client ID
+ * @returns {string} - A CSS color string
+ */
+const getUserColor = (clientID) => {
+  // List of distinct colors for users
+  const userColors = [
+    "#ecd444", // yellow
+    "#ee6352", // red
+    "#6eeb83", // green
+    "#3fa7d6", // blue
+    "#c17af4", // purple
+    "#f49e4c", // orange
+    "#ab3428", // dark red
+    "#3d5a80", // navy
+    "#55a630", // lime
+    "#9e2a2b", // burgundy
+    "#7209b7", // violet
+    "#4cc9f0", // cyan
+    "#fb8500", // bright orange
+    "#2b9348", // forest green
+    "#bc6c25", // brown
+    "#8338ec", // indigo
+    "#ff006e", // pink
+    "#14213d", // dark blue
+    "#5f0f40", // maroon
+    "#0077b6"  // cerulean
+  ];
+  
+  // Use the clientID to select a consistent color
+  return userColors[clientID % userColors.length];
+};
+
+/**
+ * Generates a lighter version of a color for backgrounds
+ * @param {string} color - The base color in hex format
+ * @param {number} opacity - Opacity value between 0 and 1
+ * @returns {string} - A CSS rgba color string
+ */
+const getLightColor = (color, opacity = 0.2) => {
+  // Convert hex to rgba
+  const r = parseInt(color.slice(1, 3), 16);
+  const g = parseInt(color.slice(3, 5), 16);
+  const b = parseInt(color.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 };
 
 const versionList = (editorview, doc, permanentUserData) => {
@@ -246,17 +327,19 @@ window.addEventListener("load", () => {
   // If user cancels or enters empty string, use a default name
   const userDisplayName = username ? username.trim() : "Anonymous";
   
-  // Select a random color for the user
-  const userColor = random.oneOf(colors);
+  const ydoc = new Y.Doc();
   
-  // Create a user object with the provided username and random color
+  // Generate a consistent color based on the client ID
+  const userColor = getUserColor(ydoc.clientID);
+  const userLightColor = getLightColor(userColor);
+  
+  // Create a user object with the provided username and color
   const user = {
     username: userDisplayName,
-    color: userColor.dark,
-    lightColor: userColor.light
+    color: userColor,
+    lightColor: userLightColor
   };
   
-  const ydoc = new Y.Doc();
   const permanentUserData = new Y.PermanentUserData(ydoc);
   permanentUserData.setUserMapping(ydoc, ydoc.clientID, user.username);
   ydoc.gc = false;
@@ -265,7 +348,27 @@ window.addEventListener("load", () => {
     "default",
     ydoc
   );
+  
+  // Set awareness information for this user
+  provider.awareness.setLocalStateField('user', {
+    name: user.username,
+    color: user.color,
+    colorLight: user.lightColor
+  });
+  
   const yXmlFragment = ydoc.get("prosemirror", Y.XmlFragment);
+
+  // Add CSS for highlighting user changes
+  const styleElement = document.createElement('style');
+  styleElement.textContent = `
+    .user-change {
+      transition: background-color 0.5s ease;
+    }
+    .user-change-highlight {
+      transition: background-color 0s;
+    }
+  `;
+  document.head.appendChild(styleElement);
 
   const editor = document.createElement("div");
   editor.setAttribute("id", "editor");
@@ -275,8 +378,32 @@ window.addEventListener("load", () => {
     state: EditorState.create({
       schema,
       plugins: [
-        ySyncPlugin(yXmlFragment, { permanentUserData, colors }),
-        yCursorPlugin(provider.awareness),
+        ySyncPlugin(yXmlFragment, { 
+          permanentUserData,
+          // Use the same color system for highlighting changes
+          colors: {
+            getColor: getUserColor,
+            getLocalColor: () => user.color,
+            getLightColor: getLightColor
+          }
+        }),
+        yCursorPlugin(provider.awareness, {
+          // Configure cursor to show username
+          cursorBuilder: (user) => {
+            const cursor = document.createElement('span');
+            cursor.classList.add('y-cursor');
+            cursor.setAttribute('style', `border-color: ${user.color}`);
+            
+            // Create tooltip with username
+            const tooltip = document.createElement('div');
+            tooltip.textContent = user.name || 'Anonymous';
+            tooltip.style.backgroundColor = user.color;
+            tooltip.style.color = '#fff';
+            
+            cursor.appendChild(tooltip);
+            return cursor;
+          }
+        }),
         yUndoPlugin(),
         keymap({
           "Mod-z": undo,
