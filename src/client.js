@@ -41,6 +41,7 @@ const addVersion = (doc, username) => {
       ? Y.emptySnapshot
       : Y.decodeSnapshot(prevVersion.snapshot);
   const snapshot = Y.snapshot(doc);
+  
   if (prevVersion != null) {
     // account for the action of adding a version to ydoc
     prevSnapshot.sv.set(
@@ -49,22 +50,23 @@ const addVersion = (doc, username) => {
     );
   }
   
-  // Check if there are local changes by comparing the local state vector
-  let hasLocalChanges = false;
+  // Only proceed if snapshots are different
   if (!Y.equalSnapshots(prevSnapshot, snapshot)) {
-    // Check if the current client has made changes
+    // Get the local client ID
     const localClientID = doc.clientID;
+    
+    // Check if this client has made changes by examining the state vectors
     const prevSV = prevSnapshot.sv;
     const currentSV = snapshot.sv;
     
-    // If this client's state vector has increased, they've made changes
-    const prevClientValue = prevSV.get(localClientID) || 0;
-    const currentClientValue = currentSV.get(localClientID) || 0;
+    // Get previous and current clock values for this client
+    const prevClientClock = prevSV.get(localClientID) || 0;
+    const currentClientClock = currentSV.get(localClientID) || 0;
     
-    hasLocalChanges = currentClientValue > prevClientValue;
-    
-    // Only add a version if the local user has made changes
-    if (hasLocalChanges) {
+    // Only add a version if this client's clock has increased
+    // AND there's actual content in the document
+    if (currentClientClock > prevClientClock && 
+        doc.getXmlFragment('prosemirror').toString().length > 0) {
       // Ensure we're storing a valid timestamp
       const currentTime = new Date().getTime();
       versions.push([
@@ -92,10 +94,32 @@ const setupAutoSnapshot = (doc, username, intervalSeconds = 5) => {
   // Track the last time we successfully added a version
   let lastVersionTime = Date.now();
   
+  // Track if the user has made substantive edits
+  let hasUserMadeSubstantiveEdits = false;
+  
+  // Listen for document updates
+  const updateHandler = (update, origin) => {
+    // Only mark as edited if:
+    // 1. The update originated from this client (not from the server)
+    // 2. There's actual content in the document
+    if (origin !== 'remote' && 
+        doc.getXmlFragment('prosemirror').toString().length > 0) {
+      hasUserMadeSubstantiveEdits = true;
+    }
+  };
+  
+  // Register the update handler
+  doc.on('update', updateHandler);
+  
   const intervalId = setInterval(() => {
-    // Only try to add a version if enough time has passed since the last successful version
+    // Only try to add a version if:
+    // 1. The user has made substantive edits
+    // 2. Enough time has passed since the last version
+    // 3. There's actual content in the document
     const currentTime = Date.now();
-    if (currentTime - lastVersionTime >= intervalSeconds * 1000) {
+    if (hasUserMadeSubstantiveEdits && 
+        currentTime - lastVersionTime >= intervalSeconds * 1000 &&
+        doc.getXmlFragment('prosemirror').toString().length > 0) {
       const added = addVersion(doc, username);
       if (added) {
         lastVersionTime = currentTime;
@@ -103,8 +127,11 @@ const setupAutoSnapshot = (doc, username, intervalSeconds = 5) => {
     }
   }, intervalSeconds * 1000);
   
-  // Return a function to stop the automatic snapshots
-  return () => clearInterval(intervalId);
+  // Return a function to stop the automatic snapshots and clean up
+  return () => {
+    clearInterval(intervalId);
+    doc.off('update', updateHandler);
+  };
 };
 
 const liveTracking = /** @type {HTMLInputElement} */ (
@@ -242,7 +269,45 @@ const versionList = (editorview, doc, permanentUserData) => {
 };
 
 const snapshotButton = (doc, username) => {
-  return html`<button @click=${() => addVersion(doc, username)}>Snapshot</button>`;
+  // Track if the user has made substantive edits
+  let hasUserMadeSubstantiveEdits = false;
+  
+  // Listen for document updates
+  const updateHandler = (update, origin) => {
+    // Only mark as edited if:
+    // 1. The update originated from this client
+    // 2. There's actual content in the document
+    if (origin !== 'remote' && 
+        doc.getXmlFragment('prosemirror').toString().length > 0) {
+      hasUserMadeSubstantiveEdits = true;
+    }
+  };
+  
+  // Register the update handler
+  doc.on('update', updateHandler);
+  
+  // Create the button element
+  const button = html`<button 
+    @click=${() => {
+      if (hasUserMadeSubstantiveEdits && 
+          doc.getXmlFragment('prosemirror').toString().length > 0) {
+        addVersion(doc, username);
+      } else if (doc.getXmlFragment('prosemirror').toString().length === 0) {
+        alert("The document is empty.");
+      } else {
+        alert("You haven't made any changes yet.");
+      }
+    }}
+  >Snapshot</button>`;
+  
+  // Clean up the event listener when the button is disconnected
+  if (button.disconnected) {
+    button.disconnected = () => {
+      doc.off('update', updateHandler);
+    };
+  }
+  
+  return button;
 };
 
 /**
